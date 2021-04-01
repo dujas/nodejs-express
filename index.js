@@ -14,7 +14,6 @@ const app = express();
 app.use(cors());
 const port = 8080;
 
-// si on est en production
 app.get("/api", (req, res) => {
 
     // je recupere les donnees de la spreadsheet
@@ -91,6 +90,8 @@ app.get("/api", (req, res) => {
     });    
 });
 
+
+// si on est en production
 if ('production' === process.env.NODE_ENV) {
 
     app.use(express.static(path.join(__dirname, "build")));
