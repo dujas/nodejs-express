@@ -1,32 +1,121 @@
 'use strict';
 
 const express = require('express'),    
+    bodyParser = require('body-parser'),
     cors = require('cors'),
+    multer = require('multer'),
+    fs = require('fs'),
+    { Readable } = require('stream'),
     path = require('path');    
 
 //
 const { google } = require('googleapis');    
 const googleConfig = require('./googleconfig');
 
+//
+const upload = multer();
+
 const ENV = process.env.NODE_ENV;
 
 const app = express();
+app.use(bodyParser.json());
 app.use(cors());
 const port = 8080;
 
+const _uploadToDrive = (file, authServiceAccClient) => {
+
+    let folderId = '1HhbQBIm2xumYZr_UY5fLotK1ZutRt6_p'; // Id du dossier Google Drive
+
+    return new Promise((resolve, reject) => {
+
+        const drive = google.drive('v3');
+
+        drive.files.create({
+            auth: authServiceAccClient,
+            resource: { 
+                name: file.originalname,
+                parents: [folderId] // emplacement de l'image 
+            },
+            media: {
+                mimeType: file.mimetype,
+                body: Readable.from(file.buffer)
+            }
+        }, (err, resp) => {
+            if (err) {                
+                res.status(500).send(err);
+                reject();
+            } else {
+                let data = resp.data;
+                let fileId = data.id;
+                let fileUrl = `https://drive.google.com/file/d/${fileId}`;
+                resolve(fileUrl);
+            }            
+        });        
+    });
+}
+
+//
+app.post("/api/submit",  upload.single('file'), (req, res) => {
+
+    // id du fichier Google Sheet
+    let ID = '11zQcFFXLuyLq5AO69aLGhp0EIli8k6zmwKHwn2A0IfI'; 
+
+    // On genere un token pour authentifier notre requete aupres de Google
+    const authServiceAccClient = new google.auth.GoogleAuth({
+        keyFile: path.join(__dirname, 'googleconfig.json'),
+        scopes: [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]        
+    });         
+
+    // on recoit les donnees en format JSON
+    let body = req.body;    
+    let file = req.file;
+
+
+    // On enregistre le fichier dans Drive
+    _uploadToDrive(file, authServiceAccClient)
+    .then(fileUrl => {
+
+        // APi Sheets
+        let sheets = google.sheets('v4');    
+        
+        // On transforme les donéees en un tableau à 2 dimensions
+        let values = [ [ body.email, body.subject, body.message, fileUrl ] ];
+
+        // On enregistre dans le fichier Sheet dans l'onglet "FORM"
+        sheets.spreadsheets.values.append({
+            auth: authServiceAccClient,
+            spreadsheetId: ID,
+            range: 'FORM!A:Z',
+            valueInputOption: 'RAW',
+            resource: {
+                values: values,
+                majorDimension: 'ROWS'
+            }
+        }, (err, resp) => {
+            if (err) {
+                res.status(500).send(err);
+            } else {
+                res.send('ok');
+            }
+        });
+    })
+})
+
+
+//
 app.get("/api", (req, res) => {
 
-    // je recupere les donnees de la spreadsheet
-
-    let ID = '11zQcFFXLuyLq5AO69aLGhp0EIli8k6zmwKHwn2A0IfI';
+    // id du fichier Google Sheet
+    let ID = '11zQcFFXLuyLq5AO69aLGhp0EIli8k6zmwKHwn2A0IfI'; 
     
-    const authServiceAccClient = new google.auth.JWT(
-        googleConfig.client_email,
-        null,
-        googleConfig.private_key,
-        ["https://www.googleapis.com/auth/spreadsheets"],
-        null
-    );     
+    // je recupere les donnees du fichier Sheets
+    const authServiceAccClient = new google.auth.GoogleAuth({
+        keyFile: path.join(__dirname, 'googleconfig.json'),
+        scopes: ["https://www.googleapis.com/auth/spreadsheets"]        
+    });             
     let sheets = google.sheets('v4');
     sheets.spreadsheets.values.get({
         auth: authServiceAccClient,
@@ -84,7 +173,7 @@ app.get("/api", (req, res) => {
             });            
 
 
-            // je renvoie les donnee au client
+            // je renvoie les donnees au client
             res.send({ header: oHeader, block: oBlock, comment: oComment, formation: oFormation });
         }
     });    
